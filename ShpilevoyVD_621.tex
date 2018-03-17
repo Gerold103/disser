@@ -1,0 +1,192 @@
+\documentclass[a4paper,hidelinks,12pt]{article}
+\usepackage{amsmath,graphicx}
+\usepackage[utf8]{inputenc}
+\usepackage[russian]{babel}
+\usepackage{indentfirst}
+\usepackage{colortbl}
+\usepackage{setspace}
+\usepackage[noend]{algorithmic}
+\usepackage[nottoc,notlot,notlof]{tocbibind}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage[left=3cm,right=1.5cm,top=2cm,bottom=2cm,bindingoffset=0cm]{geometry}
+\setcounter{secnumdepth}{4}
+\linespread{1.5}
+\usepackage{xcolor}
+\usepackage{pdfcomment}
+
+\begin {document}
+\begin {titlepage}
+\thispagestyle{empty}
+
+\begin{center}
+\vspace{-1cm}
+
+%
+% No necessity to specify laboratory.
+%
+\includegraphics[width=0.5\textwidth]{msu}\\
+Московский Государственный Университет им. М.В. Ломоносова\\
+Факультет Вычислительной Математики и Кибернетики\\
+Кафедра Автоматизации Систем Вычислительных Комплексов\\
+
+\vspace{3cm}
+
+{\Large Шпилевой Владислав Дмитриевич}
+
+\vspace{1cm}
+
+{\LARGE\bfseries Разработка и реализация алгоритма отложенного
+обновления вторичных индексов на LSM-деревьях\\}
+
+\vspace{1cm}
+
+{\Large Магистерская диссертация}
+\end{center}
+
+\vfill
+
+\begin{flushright}
+\textbf {Научный руководитель:}\\
+к.ф.-м.н. ассистент \\
+Д.Ю.Волканов\\
+\textbf {Научный консультант:}\\
+К.А.Осипов\\
+\vspace{10mm}
+\end{flushright}
+
+\vfill
+
+\begin{center}
+Москва, 2018
+\end{center}
+
+\end{titlepage}
+
+\setcounter{page}{2}
+\onehalfspacing
+
+\begin{abstract}
+
+В настоящее время растет популярность баз данных, хранящих данные на диске не в
+виде традиционных B-деревьев и их производных, а в виде LSM деревьев. Главное
+преимущество LSM деревьев в том, что их обновление всегда приводит только к
+последовательной записи на диск, в отличие от B-деревьев. Это возможно благодаря
+тому, что LSM дерево способно хранить множество версий одной и той же записи -
+за счет этого при обновлении дерева не нужно точечно читать и удалять старые
+данные - это происходит позже во время слияния уровней LSM дерева. Это работает,
+когда в таблице только один индекс - первичный. При наличии вторичных индексов
+LSM деревья лишаются преимуществ версионности, так как при обновлении дерева
+нужно явно читать и удалять старые данные из всех вторичных индексов. В
+настоящей работе представлен обзор существующих способов решения этой проблемы,
+а также разработанная модификация LSM дерева, которая позволяет не делать явных
+чтений и удалений старых данных из вторичных индексов. Проведенное
+экспериментальное исследование нового LSM дерева показало прирост скорости на
+порядок при наличии нескольких вторичных индексов.
+
+\end{abstract}
+
+\newpage
+\tableofcontents
+
+\newpage
+\section{Введение}
+
+\subsection{Цель работы}
+Целью работы является увеличение скорости обновления базы данных, которая
+хранит индексы таблиц в LSM деревьях при помощи модификации процедур обновления
+и слияния уровней LSM дерева.
+
+\subsection{Актуальность}
+LSM (Log-Structured Merge) деревья были разработаны в 1990-х ~\cite{lsm-intro}
+годах для задач с интенсивной записью, и использовались в файловых системах и
+для резервного копирования. Но их применение в СУБД (Система Управления Базой
+Данных) было ограничено из-за \textit {скрытых чтений}. Скрытыми называют
+чтения, которые выполняются СУБД при обновлении данных, чтобы либо найти старые,
+данные и удалить их, либо чтобы проверить ограничения уникальности при вставке
+новых данных. Значительная часть чтений в СУБД - скрытая, так как почти любое
+обновление данных требует проверки различных ограчений и удаления старых данных,
+и это почти ничего не стоит в B-деревьях, где для обновления данных в любом
+случае нужно читать~\cite{btree-intro}. Но на LSM деревьях скрытые чтения
+значительно снижают производительность, поскольку лишают их преимуществ
+версонности данных, когда можно сохранять новые данные не читая и не удаляя
+старые явно.
+
+С появлением SSD (Solid-State Drive) дисков абсолютная скорость любых чтений и
+записи возросла на порядки по сравнению со старыми механическими дисками, но
+существенно увеличился разрыв между скоростями последовательной записи и
+последовательного чтения~\cite{ssd-tradeof}, буквально на порядки. Благодаря
+тому, что LSM дерево всегда выполняет запись на диск последовательно, а чтения
+из него на SSD по скорости мало отличаются от B-дерева, LSM дерево стало одной
+из стандартных структур данных для СУБД. Например, на момент написания работы
+LSM деревья уже используются в LevelDB~\cite{leveldb}, RocksDB~\cite{rocksdb},
+Cassandra~\cite{open-chan-ssd}, Tarantool~\cite{tarantool},
+BigTable~\cite{open-chan-ssd}, HBase~\cite{open-chan-ssd}, Riak~\cite{riak},
+MySQL~\cite{myrocks}.
+
+Однако SSD хоть и делает LSM дерево более конкурентноспособным, но не решает
+проблему существования скрытых чтений на любое обновление при наличии вторичных
+индексов, что не позволяет использовать все возможности LSM деревьев, когда
+в таблице в БД (База Данных) больше одного индекса.
+
+Когда в таблице только один индекс на LSM дереве, то любые изменения, не
+требующие знания старых данных (такие как \textit{REPLACE, DELETE}), возможны
+без скрытых чтений. Например, в случае \textit{REPLACE} запись просто попадает
+в дерево с новой версией. Тоже самое при \textit{DELETE} - ключ (набор
+индексируемых колонок и их значений), по которому производится удаление,
+попадает в дерево с новой версией и пометкой, что это именно удаление, а не
+вставка. Скрытых чтений не выполняется. Но при появлении вторичного индекса даже
+\textit{REPLACE} и \textit{DELETE} вынуждены читать старые данные из первичного
+индекса, чтобы узнать, какой у старой записи был вторичный ключ, и вставить его
+\textit{DELETE} в LSM дерево вторичного индекса.
+
+Это обычная процедура для индексов на B-деревьях, где нет версионности данных, и
+на классических LSM деревьях ее тоже нельзя избежать. Это происходит из-за того,
+что удаление старых версий данных в LSM дереве работает так, что записи
+считаются разными версиями одних и тех же данных, только если они равны по
+ключу, по которому сортируется дерево. И если некоторый запрос меняет этот ключ
+в уже существующей записи, не читая и не удаляя ее явно, то новая запись
+становится никак не связанной со старой, и старая не удалится никогда - LSM
+дерево видит их как разные ключи.
+
+Таким образом, задача борьбы со скрытыми чтениями в таблицах с индексами на LSM
+деревьях становится актуальной.
+
+\subsection{Постановка задачи}
+Etiam cursus massa quis condimentum suscipit:
+\begin{enumerate}
+\item Vivamus justo dui, scelerisque non blandit a;
+\item Molestie non urna;
+\item Pellentesque habitant morbi tristique senectus.
+\end{enumerate}
+
+\subsection{Подход к решению задачи}
+Duis tempus diam erat. Donec sit amet nulla volutpat, ullamcorper risus et, fermentum ipsum. Suspendisse non tempor quam. Pellentesque in congue felis, non auctor lacus. Aliquam et metus non turpis placerat cursus. Aenean ac felis a orci porta euismod ut ac enim.
+
+\subsection{Структура работы}
+
+\newpage
+\section{Секция}
+
+\subsection{Подсекция 1}
+
+\subsection{Подсекция 2}
+
+\subsection{Подсекция 3}
+
+\newpage
+\begin{thebibliography}{9}
+
+\bibitem{lsm-intro} O’Neil P. et al. The log-structured merge-tree (LSM-tree) //Acta Informatica. – 1996. – Т. 33. – No. 4. – С. 351-385.
+\bibitem{btree-intro} Comer D. Ubiquitous B-tree //ACM Computing Surveys (CSUR). – 1979. – Т. 11. – №. 2. – С. 121-137.
+\bibitem{ssd-tradeof} Agrawal N. et al. Design Tradeoffs for SSD Performance //USENIX Annual Technical Conference. – 2008. – Т. 8. – С. 57-70.
+\bibitem{leveldb} Wang P. et al. An efficient design and implementation of LSM-tree based key- value store on open-channel SSD //Proceedings of the Ninth European Conference on Computer Systems. – ACM, 2014. – С. 16.
+\bibitem{rocksdb} Yang F. et al. Optimizing NoSQL DB on flash: A case study of RocksDB //Ubiquitous Intelligence and Computing and 2015 IEEE 12th Intl Conf on Autonomic and Trusted Computing and 2015 IEEE 15th Intl Conf on Scalable Computing and Communications and Its Associated Workshops (UIC-ATC- ScalCom), 2015 IEEE 12th Intl Conf on. – IEEE, 2015. – С. 1062-1069.
+\bibitem{open-chan-ssd} Wang P. et al. An efficient design and implementation of LSM-tree based key- value store on open-channel SSD //Proceedings of the Ninth European Conference on Computer Systems. – ACM, 2014. – С. 16.й
+\bibitem{tarantool} Сайт базы данных Tarantool [Электронный ресурс] : сайт содержит документацию всех выпущенных версий Tarantool. — Режим доступа: https://tarantool.io. - Загл. с экрана.
+\bibitem{riak} Lersch L. et al. An analysis of LSM caching in NVRAM //Proceedings of the 13th International Workshop on Data Management on New Hardware. – ACM, 2017. – С. 9.
+\bibitem{myrocks} Dong S. et al. Optimizing Space Amplification in RocksDB //CIDR. – 2017.
+
+\end{thebibliography}
+\end{document}
