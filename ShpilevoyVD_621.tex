@@ -768,7 +768,6 @@ O(log_bm) * K
 чтений: все это отложено до слияния уровней. Отложенный \textit{REPLACE} минимум
 в два раза быстрее, чем классический, согласно следующим вычислениям:
 \begin{gather*}
-\frac{\text{\textit{REPLACE}}}{\text{Отложенный \textit{REPLACE}}} = \\
 \frac{O(log_bm) + O(log_r(N - m)) + O(log_bm) * (2K - 1)}{O(log_bm) * K} = \\
 \frac{O(log_bm * 2K) + O(log_r(N - m))}{O(log_bm) * K} = \\
 2 + \frac{O(log_r(N - m))}{O(log_bm) * K}.
@@ -796,8 +795,68 @@ O(log_bm) * K
 зависит от скорости работы с диском. В этом причина того, что даже на небольших
 таблицах возможен прирост скорости до 10 раз.
 
-\section{Экспериментальное исследование}
+\underline{Сложность \textbf {отложенного} \textit{DELETE}}:
+\begin{displaymath}
+O(log_bm)
+\end{displaymath}
+Удаление вставляется в нулевой уровень первичного индекса. Поскольку
+задействован только один индекс, откладывание \textit{DELETE} ускоряет его
+минимум в $K + 1$ раз, и чем большая часть LSM дерева находится на диске, тем
+больше относительный выигрыш:
+\begin{gather*}
+\frac{O(log_bm) + O(log_r(N-m)) + O(log_bm) * K}{O(log_bm)} = \\
+\frac{O(log_bm)*(K + 1) + O(log_r(N-m))}{O(log_bm)} = \\
+K + 1 + \frac{O(log_r(N-m))}{O(log_bm)}
+\end{gather*}
 
+\section{Экспериментальное исследование}
+Реализация алгоритма протестирована двумя бенчмарками: микробенчмарком, на
+котором разница между обычными и отложенными обновлениями видна особенно сильно,
+и Linkbench~\cite{linkbench}, на котором видно замедление чтений. Оба бенчмарка
+выполнены на одной машине с Apple SSD SM0512L, Intel i7 2.7Ghz, 4 ядра.
+
+\subsection{Микробенчмарк}
+Микробенчмарк сравнивает стоковый Tarantool 1.7 и модифицированный отложенными
+обновлениями. Бенчмарк получает наибольшую разницу скорости, нагружая запущенную
+БД запросами \textit{DELETE} и \textit{REPLACE} по таблице с неуникальными
+вторичными индексами. Схема БД состоит из одной таблицы на Vinyl движке, одного
+первичного индекса по первой колонке, и четырех вторичных индексов, по одному на
+оставшиеся поля. В SQL синтаксисе определение выглядело бы так:
+\begin{verbatim}
+create table test
+(field1 unsigned integer primary key,
+ field2 unsigned integer, field3 unsigned integer,
+ field4 unsigned integer, field5 unsigned integer);
+create not unique index on test(field2);
+create not unique index on test(field3);
+create not unique index on test(field4);
+create not unique index on test(field5);
+\end{verbatim}
+
+В процессе работы проводилось измерение количества обработанных запросов в
+секунду - RPS (requests per second), количество записей на диске, и количество
+сбросов нулевого уровня первичного LSM индекса на диск.
+
+\begin{figure}
+\centering
+\includegraphics[width=0.46\textwidth]{rps_microbench}
+\caption{Микробенчмарк, RPS}
+\label{fig:rps_microbench}
+\end{figure}
+
+\begin{figure}
+\centering
+\includegraphics[width=0.46\textwidth]{disk_stmt_microbench}
+\caption{Микробенчмарк, количество записей на диске}
+\label{fig:disk_stmt_microbench}
+\end{figure}
+
+\begin{figure}
+\centering
+\includegraphics[width=0.46\textwidth]{dump_count_microbench}
+\caption{Микробенчмарк, количество сбросов нулевого уровня}
+\label{fig:dump_count_microbench}
+\end{figure}
 
 \section{Заключение}
 1
@@ -818,6 +877,7 @@ O(log_bm) * K
 \bibitem{slimdb} Ren K. et al. SlimDB: a space-efficient key-value storage engine for semi-sorted data //Proceedings of the VLDB Endowment. – 2017. – Т. 10. – №. 13. – С. 2037-2048.
 \bibitem{bloom_less_hashing} Kirsch A., Mitzenmacher M. Less hashing, same performance: building a better bloom filter //European Symposium on Algorithms. – Springer, Berlin, Heidelberg, 2006. – С. 456-467.
 \bibitem{bloom_blocked} Putze F., Sanders P., Singler J. Cache-, hash-and space-efficient bloom filters //International Workshop on Experimental and Efficient Algorithms. – Springer, Berlin, Heidelberg, 2007. – С. 108-121.
+\bibitem{linkbench} Armstrong T. G. et al. LinkBench: a database benchmark based on the Facebook social graph //Proceedings of the 2013 ACM SIGMOD International Conference on Management of Data. – ACM, 2013. – С. 1185-1196.
 
 \end{thebibliography}
 \end{document}
