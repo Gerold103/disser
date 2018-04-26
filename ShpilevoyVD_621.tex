@@ -368,8 +368,47 @@ LSM деревья, помимо прочих применений, исполь
 \item учесть ошибки обозреваемых решений.
 \end{itemize}
 
-\subsection{Способ 1}
-1
+\subsection{Отложенные обновления индексов на B-деревьях}
+Необходимость ускорения обновления индексов стала актуальна еще до изобретения
+LSM дерева, когда повсеместно для хранения использовались B-деревья и
+механические жесткие диски. В работе~\cite{btree_update_def} (Analysis of a
+deferred and incremental update strategy for secondary indexes) 1991 года
+предлагается способ откладывания обновлений индексов до выполнения запроса по
+ключам, по которым выполнялось обновление.
+
+Идея решения в том, чтобы избавиться не от скрытых чтений, а от случайной записи
+в B-дерево. Дело в том, что обновление B-дерева всегда приводит к точечной
+записи на диск, что в худшем случае вызывает перебалансировку дерева.
+
+Решение состоит в том, что после прочтения старой записи с диска и применения
+операций обновления в памяти, новая запись попадает на сразу в B-дерево, а в
+некоторый специальный файл изменений (differential file), который создается для
+каждого вторичного индекса. В файле изменений записано, какой вторичный ключ до
+какого нового значения был обновлен, и по какому первичному ключу искать полную
+запись в первичном индексе.
+
+Когда выполняется поиск по вторичному индексу, то сперва нужный ключ ищется в
+файле изменений. Если там нашлась запись об этом ключе, и пользователь
+запрашивал только колонки вторичного индекса, то они извлекаются из этой записи,
+и на этом поиск окончен. Если же нужны другие столбцы, то из записи берется
+первичный ключ, и по нему выполняется поиск полной записи. В системе есть
+некоторый фоновый процесс, который занимается применением файлов изменений в
+B-деревья индексов.
+
+Работа~\cite{btree_update_def} - это не первое место, где появляются файлы
+изменений. Первое их упоминание находится в одноименной работе Differential
+Files~\cite{differential_files}. Файлы изменений представляются как некоторый
+способ версионирования, например, B-дерева, при котором в файлах индексов могут
+оставаться старые данные, а новые уже лежат в файлах изменений.
+
+Но такая архитектура не позволяет хранить множество версий одной и той же
+записи, не дает избавиться от скрытых чтений, не уменьшает издержек на запись
+новых данных и удаления старых данных из B-деревьев. В противовес B-деревьям
+можно сказать, что LSM деревья полностью состоят из файлов изменений.
+
+Однако идея откладывать обновления, чтобы избавиться от самой дорогой операции
+B-дерева, может быть перенесена на LSM дерево, чтобы избавиться от его самой
+дорогой операции - скрытого чтения.
 
 \subsection{Способ 2}
 1
@@ -964,6 +1003,8 @@ MyRocks.
 \bibitem{bloom_less_hashing} Kirsch A., Mitzenmacher M. Less hashing, same performance: building a better bloom filter //European Symposium on Algorithms. – Springer, Berlin, Heidelberg, 2006. – С. 456-467.
 \bibitem{bloom_blocked} Putze F., Sanders P., Singler J. Cache-, hash-and space-efficient bloom filters //International Workshop on Experimental and Efficient Algorithms. – Springer, Berlin, Heidelberg, 2007. – С. 108-121.
 \bibitem{linkbench} Armstrong T. G. et al. LinkBench: a database benchmark based on the Facebook social graph //Proceedings of the 2013 ACM SIGMOD International Conference on Management of Data. – ACM, 2013. – С. 1185-1196.
+\bibitem{btree_update_def} Omiecinski E., Liu W., Akyildiz I. Analysis of a deferred and incremental update strategy for secondary indexes //Information Systems. – 1991. – Т. 16. – №. 3. – С. 345-356.
+\bibitem{differential_files} Severance D. G., Lohman G. M. Differential files: their application to the maintenance of large databases //ACM Transactions on Database Systems (TODS). – 1976. – Т. 1. – №. 3. – С. 256-267.
 
 \end{thebibliography}
 \end{document}
